@@ -1,0 +1,18 @@
+# Public web pages the web-reader agent checks each day.
+# Claude reads each page and pulls out the index value and its as-of date. A value is kept
+# only if the quoted text really appears on the page and the price is inside [min, max].
+# Check each site's terms of use before relying on these values commercially.
+
+[[page]]
+series = "SILICONDATA.H100"
+name = "Silicon Data H100 Rental Index (SDH100RT, settles CME GPU1)"
+url = "https://www.silicondata.com/products/silicon-index/h100"
+min = 0.5
+max = 20
+
+[[page]]
+series = "SILICONDATA.B200"
+name = "Silicon Data B200 Rental Index (settles CME GPU2)"
+url = "https://www.silicondata.com/products/silicon-index/b200"
+min = 1
+max = 40

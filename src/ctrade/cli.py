@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from . import services
+from . import agents, marking, services
 from .db import Product, init_db, session_scope
 
 
@@ -174,6 +174,51 @@ def cmd_pnl(args) -> None:
         sys.exit(1)
 
 
+def cmd_agents_list(args) -> None:
+    for a in agents.all_agents():
+        print(f"{a.name:12} {a.description}")
+
+
+def _print_runs(runs) -> None:
+    for r in runs:
+        print(f"{r.agent:12} {r.status:8} {r.message}")
+
+
+def cmd_agents_run(args) -> None:
+    with session_scope() as s:
+        runs = agents.run_agents(s, _d(args.date), only=args.only, backfill_days=args.backfill)
+        _print_runs(runs)
+    if any(r.status == "failed" for r in runs):
+        sys.exit(1)
+
+
+def _print_marks(results) -> None:
+    for r in results:
+        price = "" if r.price is None else f"{r.price:.4f}"
+        print(f"{r.instrument_id:40} {r.status:12} {price:>10}  {r.method} {r.note}")
+
+
+def cmd_mark_build(args) -> None:
+    with session_scope() as s:
+        results = marking.build_marks(s, _d(args.date))
+        _print_marks(results)
+    if any(r.status == "no-source" for r in results):
+        sys.exit(1)
+
+
+def cmd_eod(args) -> None:
+    """Run the agents, build marks, then run the daily P&L."""
+    as_of = _d(args.date)
+    with session_scope() as s:
+        print("== Agents")
+        _print_runs(agents.run_agents(s, as_of, backfill_days=args.backfill))
+        print("== Marks")
+        _print_marks(marking.build_marks(s, as_of))
+    print("== P&L")
+    args.prior, args.no_store = None, False
+    cmd_pnl(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ctrade", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -236,6 +281,23 @@ def build_parser() -> argparse.ArgumentParser:
     mimp = msub.add_parser("import")
     mimp.add_argument("path")
     mimp.set_defaults(fn=cmd_mark_import)
+    mbuild = msub.add_parser("build", help="mark traded instruments from agent data")
+    mbuild.add_argument("--date", default=date.today().isoformat())
+    mbuild.set_defaults(fn=cmd_mark_build)
+
+    ag = sub.add_parser("agents", help="market data agents")
+    agsub = ag.add_subparsers(dest="action", required=True)
+    agsub.add_parser("list").set_defaults(fn=cmd_agents_list)
+    agrun = agsub.add_parser("run", help="collect prices from public sources")
+    agrun.add_argument("--date", default=date.today().isoformat())
+    agrun.add_argument("--only", nargs="+", help="agent names, e.g. ornn web")
+    agrun.add_argument("--backfill", type=int, default=0, help="days of history to fetch")
+    agrun.set_defaults(fn=cmd_agents_run)
+
+    eod = sub.add_parser("eod", help="agents, then marks, then daily P&L")
+    eod.add_argument("--date", default=date.today().isoformat())
+    eod.add_argument("--backfill", type=int, default=0)
+    eod.set_defaults(fn=cmd_eod)
 
     pos = sub.add_parser("positions", help="positions and unrealized P&L")
     pos.add_argument("--date", default=date.today().isoformat())
