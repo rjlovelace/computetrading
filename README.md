@@ -31,7 +31,7 @@ pip install -e '.[dev]'
 
 # 2. Database: Postgres in Docker, or skip this for a local SQLite file
 docker compose up -d
-cp .env.example .env && export $(cat .env | xargs)
+cp .env.example .env    # Windows: copy .env.example .env
 
 # 3. Create tables and load the contract catalogue
 ctrade init
@@ -39,6 +39,10 @@ ctrade init
 # 4. Use the app
 streamlit run app/Home.py
 ```
+
+`ctrade` and the app read settings such as `DATABASE_URL` and `ANTHROPIC_API_KEY` from the
+`.env` file in the project folder, so nothing needs exporting. A variable already set in your
+environment takes priority over `.env`. Keep `.env` private; it is in `.gitignore`.
 
 ## Command line
 
