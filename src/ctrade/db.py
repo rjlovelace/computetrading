@@ -136,6 +136,41 @@ class DailyPnL(Base):
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MarketObservation(Base):
+    """A price collected by an agent, e.g. one day's value of a GPU rental index.
+
+    Append-only: a re-fetch writes a new row, and the latest `fetched_at` wins.
+    """
+
+    __tablename__ = "market_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    series: Mapped[str] = mapped_column(String(100), index=True)  # e.g. ORNN.OCPI.H100 SXM
+    obs_date: Mapped[date] = mapped_column(Date, index=True)
+    value: Mapped[Decimal] = mapped_column(PRICE)
+    unit: Mapped[str] = mapped_column(String(40), default="USD/GPU-hr")
+    agent: Mapped[str] = mapped_column(String(40))
+    method: Mapped[str] = mapped_column(String(40), default="api")  # api | web-extract | file
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[str] = mapped_column(Text, default="")  # evidence, e.g. the quoted page text
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AgentRun(Base):
+    """One run of one agent, for monitoring."""
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent: Mapped[str] = mapped_column(String(40))
+    as_of_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20))  # ok | skipped | failed
+    observations: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 def database_url() -> str:
     return os.environ.get("DATABASE_URL", "sqlite:///ctrade.db")
 

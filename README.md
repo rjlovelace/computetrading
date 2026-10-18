@@ -19,7 +19,8 @@ rental blocks. The design is in [docs/design.md](docs/design.md).
   The run warns about missing marks and any unexplained residual.
 - **Streamlit app** for all of the above, and a `ctrade` command line.
 
-Market data capture and the automated curve builder come next (see design doc section 8).
+- **Market data agents** (v0.2) that collect GPU index prices from public sources and turn
+  them into end-of-day marks. See below.
 
 ## Quick start
 
@@ -51,6 +52,47 @@ ctrade trade import trades.csv      # instrument_id,side,quantity,price,trade_da
 ctrade positions --date 2026-11-02
 ctrade pnl --date 2026-11-02
 ```
+
+## Market data agents
+
+Agents collect prices; `ctrade mark build` turns them into marks. Every automatic mark records
+its method and evidence, and a mark you enter by hand is never replaced.
+
+| Agent | Source | Feeds | Needs |
+|---|---|---|---|
+| `ornn` | [Ornn OCPI](https://data.ornn.com) public API: daily H100 SXM, H200, B200, A100, RTX 5090 | ICE HPR / BKL futures, spot blocks | Nothing (free tier). `ORNN_API_KEY` for more history |
+| `web` | Claude reads the public [Silicon Data](https://www.silicondata.com/products/silicon-index/h100) H100 and B200 index pages (list in `config/web_sources.toml`) | CME GPU1 / GPU2 futures | `ANTHROPIC_API_KEY` |
+| `settlements` | Exchange settlement CSVs you drop in `data/settlements/` (`instrument_id,date,settle`) | Any futures contract | Files from your broker or the exchange |
+
+How marks are built, in order: a hand-entered mark is kept; then an exchange settlement; then,
+for futures, the expected monthly average of the settlement index (days already published are
+fixed, the rest of the month assumed at the latest value); for spot blocks, the latest index
+value. Index values older than 5 days aren't used, and a product is never marked off another
+product's index. Nodal and ICE COIL contracts have no public source yet, so they stay manual.
+
+The web agent keeps a value only if the passage Claude quotes really appears on the page,
+contains the number, and the number is within the page's sanity range. Check each site's
+terms of use before relying on scraped values.
+
+```bash
+ctrade agents list
+ctrade agents run --backfill 90     # first run: load three months of Ornn history
+ctrade mark build --date 2026-11-02
+ctrade eod                          # agents, then marks, then the daily P&L, for today
+```
+
+The **Market data** page in the app does the same with buttons and shows the latest prices,
+price history and recent agent runs.
+
+### Running it every day
+
+Run `ctrade eod` once a day after the indices publish (Ornn's daily print is stamped 20:00 UTC).
+
+- **Mac/Linux** (`crontab -e`), weekdays at 5:30pm New York time on a machine set to that zone:
+  `30 17 * * 1-5 cd /path/to/computetrading && .venv/bin/ctrade eod >> eod.log 2>&1`
+- **Windows**: in Task Scheduler create a daily task that runs
+  `C:\path\to\computetrading\.venv\Scripts\ctrade.exe eod` with "Start in" set to the
+  project folder.
 
 ## Conventions
 
