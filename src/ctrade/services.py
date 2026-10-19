@@ -76,6 +76,17 @@ def ensure_spot(
     return _save_instrument(session, refdata.spot_instrument(gpu_model, start, end, venue))
 
 
+def ensure_months(session: Session, product_code: str, first_month: str, count: int
+                  ) -> list[Instrument]:
+    """Create `count` consecutive monthly contracts starting at `first_month` (YYYY-MM)."""
+    year, month = cal.parse_month(first_month)
+    out = []
+    for _ in range(count):
+        out.append(ensure_future(session, product_code, f"{year:04d}-{month:02d}"))
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return out
+
+
 # --- trades ---------------------------------------------------------------------------
 
 
@@ -241,6 +252,26 @@ def mark_map(session: Session, dates: list[date]) -> dict[tuple[str, date], Deci
         if key not in out or m.recorded_at >= out[key][0]:
             out[key] = (m.recorded_at, m.price)
     return {k: v[1] for k, v in out.items()}
+
+
+def mark_history(session: Session, instrument_ids: list[str], start: date | None = None,
+                 end: date | None = None) -> list[Mark]:
+    """The mark in force for each instrument and date (latest recorded), oldest date first."""
+    query = select(Mark).where(Mark.instrument_id.in_(instrument_ids))
+    if start is not None:
+        query = query.where(Mark.as_of_date >= start)
+    if end is not None:
+        query = query.where(Mark.as_of_date <= end)
+    latest: dict[tuple[str, date], Mark] = {}
+    for m in session.scalars(query.order_by(Mark.recorded_at, Mark.id)):
+        latest[(m.instrument_id, m.as_of_date)] = m
+    return sorted(latest.values(), key=lambda m: (m.as_of_date, m.instrument_id))
+
+
+def marked_instruments(session: Session) -> list[str]:
+    """Instruments that have at least one mark."""
+    return session.scalars(select(Mark.instrument_id).distinct().order_by(Mark.instrument_id)
+                           ).all()
 
 
 # --- positions and P&L ----------------------------------------------------------------

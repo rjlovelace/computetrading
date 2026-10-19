@@ -21,6 +21,9 @@ rental blocks. The design is in [docs/design.md](docs/design.md).
 
 - **Market data agents** (v0.2) that collect GPU index prices from public sources and turn
   them into end-of-day marks. See below.
+- **v0.3**: a database that works with no setup, automatic marking whenever prices load,
+  proxy marks (mark one contract off another), a **Mark history** chart for every contract,
+  and $1,234.56 number formats on every screen and in the command line.
 
 ## Quick start
 
@@ -29,8 +32,7 @@ rental blocks. The design is in [docs/design.md](docs/design.md).
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
-# 2. Database: Postgres in Docker, or skip this for a local SQLite file
-docker compose up -d
+# 2. Settings. The example stores data in a local file, ctrade.db, with no other setup.
 cp .env.example .env    # Windows: copy .env.example .env
 
 # 3. Create tables and load the contract catalogue
@@ -44,12 +46,22 @@ streamlit run app/Home.py
 `.env` file in the project folder, so nothing needs exporting. A variable already set in your
 environment takes priority over `.env`. Keep `.env` private; it is in `.gitignore`.
 
+### Database
+
+Everything (trades, marks, prices, P&L runs, proxy rules) is stored in the database named by
+`DATABASE_URL`. The default is the SQLite file `ctrade.db` in the project folder; back it up by
+copying that file. For Postgres, run `docker compose up -d` and switch `DATABASE_URL` in `.env`
+to the Postgres line. The Home page shows which database is in use and how much it holds.
+New versions add their tables automatically the next time you run `ctrade` or open the app;
+existing data is kept. If the database can't be reached you get a plain message saying so.
+
 ## Command line
 
 ```bash
 ctrade products
 ctrade trade add --product ICE.HPR --month 2026-12 --side buy --qty 10 --price 2.150 --date 2026-11-02
 ctrade instrument spot H100 2026-11-01 2026-11-30 --venue OTC
+ctrade instrument months ICE.HPR CME.GPU1 NODAL.H100 --first 2026-11 --count 12
 ctrade mark set ICE.HPR.2026-12 2026-11-02 2.180
 ctrade mark import marks.csv        # instrument_id,as_of_date,price[,source]
 ctrade trade import trades.csv      # instrument_id,side,quantity,price,trade_date[,book,fees,...]
@@ -59,8 +71,11 @@ ctrade pnl --date 2026-11-02
 
 ## Market data agents
 
-Agents collect prices; `ctrade mark build` turns them into marks. Every automatic mark records
-its method and evidence, and a mark you enter by hand is never replaced.
+Agents collect prices, and every contract is marked as soon as they load: `ctrade agents run`
+(and the **Load prices and mark** button) rebuilds the marks for each day that got new prices,
+through the run date. Entering or importing a mark by hand also rebuilds that day, so contracts
+proxied off it follow. Every automatic mark records its method and evidence, and a mark you
+enter by hand is never replaced.
 
 | Agent | Source | Feeds | Needs |
 |---|---|---|---|
@@ -71,8 +86,25 @@ its method and evidence, and a mark you enter by hand is never replaced.
 How marks are built, in order: a hand-entered mark is kept; then an exchange settlement; then,
 for futures, the expected monthly average of the settlement index (days already published are
 fixed, the rest of the month assumed at the latest value); for spot blocks, the latest index
-value. Index values older than 5 days aren't used, and a product is never marked off another
-product's index. Nodal and ICE COIL contracts have no public source yet, so they stay manual.
+value; then any proxy rules you set up (below). Index values older than 5 days aren't used.
+Every contract in the database is marked, traded or not, so you can chart contracts before
+trading them. Nodal and ICE COIL contracts have no public source of their own.
+
+### Proxy marks
+
+A proxy rule marks a contract from somewhere else when it has no price of its own: another
+product's contract for the same month, one specific instrument, or a price series. The mark is
+source x multiplier + spread, and rules are tried in priority order.
+
+```bash
+ctrade proxy add NODAL.H100 CME.GPU1                 # Nodal H100 follows CME GPU1 (Silicon Data H100)
+ctrade proxy add NODAL.B200 series:ORNN.OCPI.B200 --spread -0.05 --priority 2
+ctrade proxy list
+ctrade proxy remove 2
+```
+
+The **Marks** page has the same controls, and the **Mark history** page charts each contract's
+mark over time.
 
 The web agent keeps a value only if the passage Claude quotes really appears on the page,
 contains the number, and the number is within the page's sanity range. Check each site's
@@ -80,9 +112,9 @@ terms of use before relying on scraped values.
 
 ```bash
 ctrade agents list
-ctrade agents run --backfill 90     # first run: load three months of Ornn history
-ctrade mark build --date 2026-11-02
-ctrade eod                          # agents, then marks, then the daily P&L, for today
+ctrade agents run --backfill 90     # first run: three months of history, marked day by day
+ctrade mark build --date 2026-11-02 # rebuild one day's marks without fetching
+ctrade eod                          # prices and marks, then the daily P&L, for today
 ```
 
 The **Market data** page in the app does the same with buttons and shows the latest prices,
@@ -103,7 +135,8 @@ Run `ctrade eod` once a day after the indices publish (Ornn's daily print is sta
 - Quantities are contracts. Futures contracts cover the product's hours per month (CME: 730
   fixed; ICE: the clock hours in the month). A spot contract is one GPU for every hour of its
   delivery period.
-- Prices and marks are US dollars per GPU-hour. Value = price x hours per contract x contracts.
+- Prices and marks are US dollars per GPU-hour, shown to four decimals ($2.5900). Money is
+  shown to the cent ($1,234.56). Value = price x hours per contract x contracts.
 - Business days are Monday to Friday; exchange holiday calendars are not modelled yet.
 
 ## Tests

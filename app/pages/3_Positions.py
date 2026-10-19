@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
-from common import setup
+from common import setup, table
 
 from ctrade import services
 from ctrade.db import session_scope
+from ctrade.formatting import money
 
 st.set_page_config(page_title="Positions", layout="wide")
 setup()
@@ -20,9 +21,12 @@ else:
         "book": ln.book, "instrument": ln.instrument_id, "contracts": float(ln.quantity),
         "avg price": float(ln.avg_price),
         "mark": None if ln.mark is None else float(ln.mark),
-        "unrealized $": float(ln.unrealized), "realized $": float(ln.realized),
+        "unrealized": float(ln.unrealized), "realized": float(ln.realized),
     } for ln in open_lines])
-    st.dataframe(df, hide_index=True, width="stretch")
+    c1, c2 = st.columns(2)
+    c1.metric("Unrealized P&L", money(df["unrealized"].sum()))
+    c2.metric("Realized P&L", money(df["realized"].sum()))
+    table(df, money=["unrealized", "realized"], price=["avg price", "mark"], qty=["contracts"])
     missing = [ln.instrument_id for ln in open_lines if ln.mark is None]
     if missing:
         st.warning("Missing marks: " + ", ".join(missing))

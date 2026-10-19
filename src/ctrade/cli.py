@@ -12,15 +12,12 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from . import agents, marking, services
-from .db import Product, init_db, session_scope
+from .db import DatabaseUnavailable, Product, describe_url, init_db, session_scope
+from .formatting import adjustment, money, number, price
 
 
 def _d(text: str) -> date:
     return date.fromisoformat(text)
-
-
-def _money(x) -> str:
-    return "" if x is None else f"{Decimal(x):,.2f}"
 
 
 def _resolve_instrument(session, args) -> str:
@@ -35,7 +32,7 @@ def cmd_init(args) -> None:
     init_db()
     with session_scope() as s:
         n = services.seed_products(s)
-    print(f"Database ready; {n} products loaded.")
+    print(f"Database ready ({describe_url()}); {n} products loaded.")
 
 
 def cmd_products(args) -> None:
@@ -51,8 +48,15 @@ def cmd_instrument(args) -> None:
             inst = services.ensure_future(s, args.product, args.month)
         else:
             inst = services.ensure_spot(s, args.gpu, _d(args.start), _d(args.end), args.venue)
-        print(f"{inst.instrument_id}  hours/contract={inst.hours_per_contract}  "
+        print(f"{inst.instrument_id}  hours/contract={number(inst.hours_per_contract)}  "
               f"last trade {inst.last_trade_date}")
+
+
+def cmd_instrument_months(args) -> None:
+    with session_scope() as s:
+        for code in args.products:
+            for inst in services.ensure_months(s, code, args.first, args.count):
+                print(inst.instrument_id)
 
 
 def cmd_trade_add(args) -> None:
@@ -71,7 +75,8 @@ def cmd_trade_add(args) -> None:
             comment=args.comment,
             entered_by=getpass.getuser(),
         )
-        print(f"Booked trade {t.trade_id}: {t.side} {t.quantity} {t.instrument_id} @ {t.price}")
+        print(f"Booked trade {t.trade_id}: {t.side} {number(t.quantity)} {t.instrument_id} "
+              f"@ {price(t.price)}")
 
 
 def cmd_trade_amend(args) -> None:
@@ -97,7 +102,7 @@ def cmd_trades(args) -> None:
     with session_scope() as s:
         for t in services.live_trades(s):
             print(f"{t.trade_id:>5} v{t.version} {t.trade_date} {t.book:8} {t.side:4} "
-                  f"{t.quantity:>8} {t.instrument_id:28} @ {t.price}")
+                  f"{number(t.quantity):>8} {t.instrument_id:28} @ {price(t.price)}")
 
 
 def cmd_trade_import(args) -> None:
@@ -123,24 +128,32 @@ def cmd_trade_import(args) -> None:
     print(f"Imported {n} trades")
 
 
+def _remark(session, dates) -> None:
+    """Rebuild automatic marks so contracts proxied off a hand-entered mark follow it."""
+    for d in sorted(set(dates)):
+        marking.build_marks(session, d)
+
+
 def cmd_mark_set(args) -> None:
     with session_scope() as s:
         services.set_mark(s, args.instrument, _d(args.date), Decimal(args.price),
                           source=args.source, comment=args.comment,
                           entered_by=getpass.getuser())
+        _remark(s, [_d(args.date)])
     print("Mark saved")
 
 
 def cmd_mark_import(args) -> None:
     """CSV columns: instrument_id,as_of_date,price[,source]"""
-    n = 0
+    dates = []
     with session_scope() as s, open(args.path, newline="") as f:
         for row in csv.DictReader(f):
             services.set_mark(s, row["instrument_id"], _d(row["as_of_date"]),
                               Decimal(row["price"]), source=row.get("source") or "import",
                               entered_by=getpass.getuser())
-            n += 1
-    print(f"Imported {n} marks")
+            dates.append(_d(row["as_of_date"]))
+        _remark(s, dates)
+    print(f"Imported {len(dates)} marks")
 
 
 def cmd_positions(args) -> None:
@@ -150,8 +163,8 @@ def cmd_positions(args) -> None:
     for ln in lines:
         if ln.quantity == 0:
             continue
-        print(f"{ln.book:8} {ln.instrument_id:28} {ln.quantity:>8} {ln.avg_price:>10.4f} "
-              f"{'' if ln.mark is None else f'{ln.mark:.4f}':>10} {_money(ln.unrealized):>14}")
+        print(f"{ln.book:8} {ln.instrument_id:28} {number(ln.quantity):>8} "
+              f"{price(ln.avg_price):>10} {price(ln.mark):>10} {money(ln.unrealized):>14}")
 
 
 def cmd_pnl(args) -> None:
@@ -162,11 +175,11 @@ def cmd_pnl(args) -> None:
     print(f"{'book':8} {'instrument':28} {'daily':>12} {'new trd':>12} {'px move':>12} "
           f"{'fees':>10} {'amends':>10} {'cumulative':>14}")
     for ln in r.lines:
-        print(f"{ln.book:8} {ln.instrument_id:28} {_money(ln.daily):>12} "
-              f"{_money(ln.new_trades):>12} {_money(ln.price_move):>12} "
-              f"{_money(ln.fees_today):>10} {_money(ln.amendments):>10} "
-              f"{_money(ln.cumulative):>14}")
-    print(f"{'TOTAL':37} {_money(r.total_daily):>12} {'':>47} {_money(r.total_cumulative):>14}")
+        print(f"{ln.book:8} {ln.instrument_id:28} {money(ln.daily):>12} "
+              f"{money(ln.new_trades):>12} {money(ln.price_move):>12} "
+              f"{money(ln.fees_today):>10} {money(ln.amendments):>10} "
+              f"{money(ln.cumulative):>14}")
+    print(f"{'TOTAL':37} {money(r.total_daily):>12} {'':>47} {money(r.total_cumulative):>14}")
     for e in r.errors:
         print(f"WARNING: {e}", file=sys.stderr)
     if r.errors:
@@ -184,18 +197,27 @@ def _print_runs(runs) -> None:
         print(f"{r.agent:12} {r.status:8} {r.message}")
 
 
+def _print_load(loaded) -> None:
+    _print_runs(loaded.runs)
+    days = loaded.dates_marked
+    span = str(days[0]) if len(days) == 1 else f"{days[0]} to {days[-1]} ({len(days)} days)"
+    print(f"== Marks ({span})")
+    _print_marks(loaded.marks)
+
+
 def cmd_agents_run(args) -> None:
+    """Load prices, then mark every contract for each day that got new prices."""
     with session_scope() as s:
-        runs = agents.run_agents(s, _d(args.date), only=args.only, backfill_days=args.backfill)
-        _print_runs(runs)
-    if any(r.status == "failed" for r in runs):
+        loaded = marking.load_prices(s, _d(args.date), only=args.only,
+                                     backfill_days=args.backfill)
+        _print_load(loaded)
+    if any(r.status == "failed" for r in loaded.runs):
         sys.exit(1)
 
 
 def _print_marks(results) -> None:
     for r in results:
-        price = "" if r.price is None else f"{r.price:.4f}"
-        print(f"{r.instrument_id:40} {r.status:12} {price:>10}  {r.method} {r.note}")
+        print(f"{r.instrument_id:40} {r.status:12} {price(r.price):>10}  {r.method} {r.note}")
 
 
 def cmd_mark_build(args) -> None:
@@ -208,15 +230,36 @@ def cmd_mark_build(args) -> None:
 
 def cmd_eod(args) -> None:
     """Run the agents, build marks, then run the daily P&L."""
-    as_of = _d(args.date)
     with session_scope() as s:
         print("== Agents")
-        _print_runs(agents.run_agents(s, as_of, backfill_days=args.backfill))
-        print("== Marks")
-        _print_marks(marking.build_marks(s, as_of))
+        _print_load(marking.load_prices(s, _d(args.date), backfill_days=args.backfill))
     print("== P&L")
     args.prior, args.no_store = None, False
     cmd_pnl(args)
+
+
+def cmd_proxy_list(args) -> None:
+    with session_scope() as s:
+        rules = marking.list_proxies(s)
+        if not rules:
+            print("No proxy rules.")
+        for r in rules:
+            print(f"{r.id:>4}  {r.target:24} <- {r.source_kind} {r.source}"
+                  f"{adjustment(r.multiplier, r.spread)}  priority {r.priority}")
+
+
+def cmd_proxy_add(args) -> None:
+    with session_scope() as s:
+        r = marking.add_proxy(s, args.target, args.source, args.multiplier, args.spread,
+                              args.priority, args.comment, getpass.getuser())
+        print(f"Proxy rule {r.id}: {r.target} marked from {r.source_kind} {r.source} "
+              "when it has no price of its own")
+
+
+def cmd_proxy_remove(args) -> None:
+    with session_scope() as s:
+        marking.remove_proxy(s, args.rule_id)
+    print(f"Removed proxy rule {args.rule_id}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -237,6 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
     spot.add_argument("end")
     spot.add_argument("--venue", default="OTC")
     inst.set_defaults(fn=cmd_instrument)
+    months = inst_sub.add_parser("months", help="create consecutive monthly contracts")
+    months.add_argument("products", nargs="+")
+    months.add_argument("--first", default=date.today().strftime("%Y-%m"), help="YYYY-MM")
+    months.add_argument("--count", type=int, default=12)
+    months.set_defaults(fn=cmd_instrument_months)
 
     trade = sub.add_parser("trade", help="book, amend, cancel or import trades")
     tsub = trade.add_subparsers(dest="action", required=True)
@@ -294,6 +342,21 @@ def build_parser() -> argparse.ArgumentParser:
     agrun.add_argument("--backfill", type=int, default=0, help="days of history to fetch")
     agrun.set_defaults(fn=cmd_agents_run)
 
+    px = sub.add_parser("proxy", help="proxy marks: mark one contract off another")
+    pxsub = px.add_subparsers(dest="action", required=True)
+    pxsub.add_parser("list").set_defaults(fn=cmd_proxy_list)
+    pxadd = pxsub.add_parser("add", help="e.g. proxy add NODAL.H100 CME.GPU1")
+    pxadd.add_argument("target", help="product code or instrument id to mark")
+    pxadd.add_argument("source", help="product code, instrument id, or series:<name>")
+    pxadd.add_argument("--multiplier", default="1")
+    pxadd.add_argument("--spread", default="0", help="$ per GPU-hour added to the source")
+    pxadd.add_argument("--priority", type=int, default=1, help="lower is tried first")
+    pxadd.add_argument("--comment", default="")
+    pxadd.set_defaults(fn=cmd_proxy_add)
+    pxrm = pxsub.add_parser("remove")
+    pxrm.add_argument("rule_id", type=int)
+    pxrm.set_defaults(fn=cmd_proxy_remove)
+
     eod = sub.add_parser("eod", help="agents, then marks, then daily P&L")
     eod.add_argument("--date", default=date.today().isoformat())
     eod.add_argument("--backfill", type=int, default=0)
@@ -314,8 +377,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
+        # Checks the connection and adds any tables a newer version needs; data is kept.
+        init_db()
         args.fn(args)
-    except ValueError as e:
+    except (ValueError, DatabaseUnavailable) as e:
         raise SystemExit(f"Error: {e}") from None
 
 
