@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
-from common import setup
+from common import column_config, setup, table
 
 from ctrade import services
 from ctrade.db import session_scope
+from ctrade.formatting import money
 
 st.set_page_config(page_title="Daily P&L", layout="wide")
 setup()
@@ -18,19 +19,21 @@ if st.button("Run P&L"):
     if r.errors:
         st.error("This run was not saved. Fix the warnings above and run again.")
     c1, c2 = st.columns(2)
-    c1.metric(f"Daily P&L ({r.as_of} vs {r.prior})", f"${r.total_daily:,.2f}")
-    c2.metric("Cumulative P&L", f"${r.total_cumulative:,.2f}")
+    c1.metric(f"Daily P&L ({r.as_of} vs {r.prior})", money(r.total_daily))
+    c2.metric("Cumulative P&L", money(r.total_cumulative))
     df = pd.DataFrame([{
         "book": ln.book, "instrument": ln.instrument_id, "contracts": float(ln.quantity),
-        "mark": None if ln.mark is None else float(ln.mark), "daily $": float(ln.daily),
-        "new trades $": float(ln.new_trades), "price move $": float(ln.price_move),
-        "fees $": float(ln.fees_today),
-        "amendments $": float(ln.amendments), "residual $": float(ln.residual),
-        "realized $": float(ln.realized), "unrealized $": float(ln.unrealized),
-        "cumulative $": float(ln.cumulative), "expired": ln.expired,
+        "mark": None if ln.mark is None else float(ln.mark), "daily": float(ln.daily),
+        "new trades": float(ln.new_trades), "price move": float(ln.price_move),
+        "fees": float(ln.fees_today),
+        "amendments": float(ln.amendments), "residual": float(ln.residual),
+        "realized": float(ln.realized), "unrealized": float(ln.unrealized),
+        "cumulative": float(ln.cumulative), "expired": ln.expired,
     } for ln in r.lines])
-    st.dataframe(df, hide_index=True, width="stretch")
+    money_cols = ["daily", "new trades", "price move", "fees", "amendments", "residual",
+                  "realized", "unrealized", "cumulative"]
+    table(df, money=money_cols, price=["mark"], qty=["contracts"])
     if not df.empty:
         st.subheader("By book")
-        st.dataframe(df.groupby("book")[["daily $", "cumulative $"]].sum(),
-                     width="stretch")
+        st.dataframe(df.groupby("book")[["daily", "cumulative"]].sum(), width="stretch",
+                     column_config=column_config(money=["daily", "cumulative"]))

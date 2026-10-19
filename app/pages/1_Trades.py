@@ -3,11 +3,13 @@ from decimal import Decimal
 
 import pandas as pd
 import streamlit as st
-from common import setup, user
+from common import setup, table, user
 from sqlalchemy import select
 
 from ctrade import services
 from ctrade.db import Product, session_scope
+from ctrade.formatting import number
+from ctrade.formatting import price as fmt_price
 
 st.set_page_config(page_title="Trades", layout="wide")
 setup()
@@ -51,7 +53,8 @@ with st.form("book"):
                     book=book, fees=Decimal(fees), counterparty=cpty, external_ref=ref,
                     comment=comment, entered_by=user(),
                 )
-            st.success(f"Booked trade {t.trade_id}")
+            st.success(f"Booked trade {t.trade_id}: {t.side} {number(t.quantity)} "
+                       f"{t.instrument_id} at {fmt_price(t.price)}")
         except Exception as e:  # show validation errors in the page
             st.error(str(e))
 
@@ -64,7 +67,7 @@ with session_scope() as s:
         "price": float(t.price), "fees": float(t.fees), "cpty": t.counterparty,
         "ref": t.external_ref, "comment": t.comment,
     } for t in trades])
-st.dataframe(df, width="stretch", hide_index=True)
+table(df, money=["fees"], price=["price"], qty=["qty"])
 
 with st.expander("Amend or cancel a trade"):
     tid = st.number_input("Trade id", min_value=1, step=1)

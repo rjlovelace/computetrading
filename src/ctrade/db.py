@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import (
     Boolean,
@@ -24,7 +25,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    make_url,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 PRICE = Numeric(18, 6)
@@ -156,6 +159,28 @@ class MarketObservation(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MarkProxy(Base):
+    """Where to take a mark from when a contract has no price of its own.
+
+    `target` is a product code (every contract month of it) or one instrument id. The source
+    is another product's contract for the same delivery period, a specific instrument, or a
+    price series such as SILICONDATA.H100. The mark is source x multiplier + spread.
+    """
+
+    __tablename__ = "mark_proxies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target: Mapped[str] = mapped_column(String(100), index=True)
+    source_kind: Mapped[str] = mapped_column(String(20))  # product | instrument | series
+    source: Mapped[str] = mapped_column(String(100))
+    multiplier: Mapped[Decimal] = mapped_column(PRICE, default=Decimal("1"))
+    spread: Mapped[Decimal] = mapped_column(PRICE, default=Decimal("0"))  # $ per GPU-hour
+    priority: Mapped[int] = mapped_column(Integer, default=1)  # lower is tried first
+    comment: Mapped[str] = mapped_column(Text, default="")
+    entered_by: Mapped[str] = mapped_column(String(60), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentRun(Base):
     """One run of one agent, for monitoring."""
 
@@ -171,8 +196,31 @@ class AgentRun(Base):
     finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+DEFAULT_URL = "sqlite:///ctrade.db"
+
+
 def database_url() -> str:
-    return os.environ.get("DATABASE_URL", "sqlite:///ctrade.db")
+    return os.environ.get("DATABASE_URL") or DEFAULT_URL
+
+
+def describe_url(url: str | None = None) -> str:
+    """The database location without any password, e.g. for showing on screen."""
+    parsed = make_url(url or database_url())
+    if parsed.get_backend_name() == "sqlite":
+        return f"SQLite file {Path(parsed.database or '').resolve()}"
+    return f"{parsed.get_backend_name()} database {parsed.database} on {parsed.host}:{parsed.port}"
+
+
+class DatabaseUnavailable(RuntimeError):
+    """The database in DATABASE_URL can't be reached."""
+
+
+def unavailable_message(url: str | None = None) -> str:
+    return (
+        f"Can't connect to the {describe_url(url)}. If you use Postgres, start it with "
+        "`docker compose up -d`. To use a local file instead, put "
+        f"`DATABASE_URL={DEFAULT_URL}` in your .env file."
+    )
 
 
 _engines: dict[str, object] = {}
@@ -181,11 +229,24 @@ _engines: dict[str, object] = {}
 def get_engine(url: str | None = None):
     url = url or database_url()
     if url not in _engines:
-        _engines[url] = create_engine(url)
+        # Fail fast instead of hanging when a database server isn't running.
+        args = {"connect_timeout": 5} if url.startswith("postgres") else {}
+        _engines[url] = create_engine(url, connect_args=args)
     return _engines[url]
 
 
+def check_connection(url: str | None = None) -> None:
+    """Raise DatabaseUnavailable with a plain explanation if the database can't be reached."""
+    try:
+        with get_engine(url).connect():
+            pass
+    except OperationalError as e:
+        raise DatabaseUnavailable(unavailable_message(url)) from e
+
+
 def init_db(url: str | None = None) -> None:
+    """Create any missing tables. Existing tables and their data are left alone."""
+    check_connection(url)
     Base.metadata.create_all(get_engine(url))
 
 
