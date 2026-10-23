@@ -24,6 +24,8 @@ rental blocks. The design is in [docs/design.md](docs/design.md).
 - **v0.3**: a database that works with no setup, automatic marking whenever prices load,
   proxy marks (mark one contract off another), a **Mark history** chart for every contract,
   and $1,234.56 number formats on every screen and in the command line.
+- **v0.4**: a **Charts** page with term structures (and their day over day change), saved
+  spreads with their daily change, and simple or exponential moving averages. See below.
 
 ## Quick start
 
@@ -103,8 +105,31 @@ ctrade proxy list
 ctrade proxy remove 2
 ```
 
-The **Marks** page has the same controls, and the **Mark history** page charts each contract's
-mark over time.
+The **Marks** page has the same controls.
+
+## Charts
+
+The **Charts** page has three tabs:
+
+- **Mark history**: each contract's mark over time.
+- **Term structure**: pick a product, such as CME.GPU1, to see one line across its contract
+  months. Add curve dates to compare curves, and the second chart shows each date's
+  change from the previous marked date, month by month.
+- **Spreads**: create a spread from two or three contracts with weights, such as
+  CME.GPU2 Jan27 - CME.GPU1 Jan27, then chart its value and its daily change. Spreads are
+  saved, so they are there next time.
+
+Mark history and spreads can show moving averages: SMA (simple average of the last N marks)
+or EMA (exponential, weighting recent marks more). Pick from the list or type others, e.g.
+SMA 50. Each average is drawn as a dashed line.
+
+```bash
+ctrade curve CME.GPU1 --dates 3                       # last 3 curves and today's change
+ctrade spread add --leg "CME.GPU2 Jan27:1" --leg "CME.GPU1 Jan27:-1"
+ctrade spread list
+ctrade spread show 1 --days 20 --ma "SMA 5" --ma "EMA 10"
+ctrade spread remove 1
+```
 
 The web agent keeps a value only if the passage Claude quotes really appears on the page,
 contains the number, and the number is within the page's sanity range. Check each site's

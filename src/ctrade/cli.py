@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from . import agents, marking, services
+from . import agents, analytics, marking, services
 from .db import DatabaseUnavailable, Product, describe_url, init_db, session_scope
 from .formatting import adjustment, money, number, price
 
@@ -262,6 +262,85 @@ def cmd_proxy_remove(args) -> None:
     print(f"Removed proxy rule {args.rule_id}")
 
 
+def cmd_curve(args) -> None:
+    """Print a product's term structure for the latest marked dates, with daily changes."""
+    with session_scope() as s:
+        dates = analytics.curve_dates(s, args.product, _d(args.date))[: args.dates]
+        if not dates:
+            raise SystemExit(f"No marks for {args.product} on or before {args.date}")
+        curve = analytics.term_structure(s, args.product, dates)
+        changes = analytics.curve_changes(s, args.product, dates[:1])
+    chg = {r.instrument: r.change for r in changes.itertuples()}
+    print(f"{'contract':10}" + "".join(f"{d:%b %d}".rjust(11) for d in dates)
+          + "   change".rjust(11))
+    for _, part in curve.sort_values("month").groupby("month", sort=False):
+        marks = dict(zip(part["date"], part["mark"], strict=True))
+        row = part.iloc[0]
+        print(f"{row['contract']:10}" + "".join(price(marks.get(d)).rjust(11) for d in dates)
+              + price(chg.get(row["instrument"])).rjust(11))
+
+
+def cmd_spread_add(args) -> None:
+    legs = []
+    for text in args.leg:
+        contract, _, weight = text.rpartition(":")
+        if not contract:
+            raise ValueError("Write each leg as CONTRACT:WEIGHT, e.g. 'CME.GPU1 Jan27:-1'")
+        legs.append((contract, weight))
+    with session_scope() as s:
+        sp = analytics.add_spread(s, legs, args.name, getpass.getuser())
+        print(f"Spread {sp.id}: {sp.name}")
+
+
+def cmd_spread_list(args) -> None:
+    with session_scope() as s:
+        spreads = analytics.list_spreads(s)
+        if not spreads:
+            print("No spreads.")
+        for sp in spreads:
+            print(f"{sp.id:>4}  {sp.name}")
+
+
+def _find_spread(session, ref: str):
+    for sp in analytics.list_spreads(session):
+        if ref in (str(sp.id), sp.name):
+            return sp
+    raise ValueError(f"No spread {ref!r}; see `ctrade spread list`")
+
+
+def _p(value) -> str:
+    """Price text, blank for a missing value (None or NaN)."""
+    return "" if value is None or value != value else price(value)
+
+
+def cmd_spread_show(args) -> None:
+    with session_scope() as s:
+        sp = _find_spread(s, args.spread)
+        df = analytics.spread_history(s, analytics.parse_legs(sp.legs))
+    studies = [f"{kind} {window}" for kind, window in args.ma or []]
+    for (kind, window), col in zip(args.ma or [], studies, strict=True):
+        df[col] = analytics.moving_average(df["value"], window, kind)
+    cols = ["value", "change", *studies]
+    print(sp.name)
+    print(f"{'date':12}" + "".join(f"{'spread' if c == 'value' else c:>11}" for c in cols))
+    for _, row in df.tail(args.days).iterrows():
+        print(f"{str(row['date']):12}" + "".join(f"{_p(row[c]):>11}" for c in cols))
+
+
+def cmd_spread_remove(args) -> None:
+    with session_scope() as s:
+        sp = _find_spread(s, args.spread)
+        analytics.remove_spread(s, sp.id)
+    print(f"Removed spread {sp.name}")
+
+
+def _study(text: str) -> tuple[str, int]:
+    kind, _, window = text.upper().partition(" ")
+    if kind not in analytics.MA_KINDS or not window.isdigit():
+        raise argparse.ArgumentTypeError("write e.g. 'SMA 20' or 'EMA 5'")
+    return kind, int(window)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ctrade", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -356,6 +435,29 @@ def build_parser() -> argparse.ArgumentParser:
     pxrm = pxsub.add_parser("remove")
     pxrm.add_argument("rule_id", type=int)
     pxrm.set_defaults(fn=cmd_proxy_remove)
+
+    curve = sub.add_parser("curve", help="term structure of a product, e.g. curve CME.GPU1")
+    curve.add_argument("product")
+    curve.add_argument("--date", default=date.today().isoformat(), help="latest curve date")
+    curve.add_argument("--dates", type=int, default=3, help="how many marked dates to show")
+    curve.set_defaults(fn=cmd_curve)
+
+    spr = sub.add_parser("spread", help="spreads between contracts")
+    sprsub = spr.add_subparsers(dest="action", required=True)
+    sadd = sprsub.add_parser("add", help="e.g. spread add --leg 'CME.GPU2 Jan27:1' "
+                                         "--leg 'CME.GPU1 Jan27:-1'")
+    sadd.add_argument("--leg", action="append", required=True, help="CONTRACT:WEIGHT")
+    sadd.add_argument("--name", default="")
+    sadd.set_defaults(fn=cmd_spread_add)
+    sprsub.add_parser("list").set_defaults(fn=cmd_spread_list)
+    sshow = sprsub.add_parser("show", help="spread value and daily change by date")
+    sshow.add_argument("spread", help="spread id or name")
+    sshow.add_argument("--days", type=int, default=20)
+    sshow.add_argument("--ma", type=_study, action="append", help="e.g. --ma 'SMA 5'")
+    sshow.set_defaults(fn=cmd_spread_show)
+    srm = sprsub.add_parser("remove")
+    srm.add_argument("spread", help="spread id or name")
+    srm.set_defaults(fn=cmd_spread_remove)
 
     eod = sub.add_parser("eod", help="agents, then marks, then daily P&L")
     eod.add_argument("--date", default=date.today().isoformat())

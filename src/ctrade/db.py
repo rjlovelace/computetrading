@@ -181,6 +181,21 @@ class MarkProxy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Spread(Base):
+    """A saved spread: a weighted sum of contract marks, e.g. GPU2 Jan27 - GPU1 Jan27.
+
+    `legs` holds one "instrument_id weight" pair per line, e.g. "CME.GPU2.2027-01 1".
+    """
+
+    __tablename__ = "spreads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    legs: Mapped[str] = mapped_column(Text)
+    entered_by: Mapped[str] = mapped_column(String(60), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentRun(Base):
     """One run of one agent, for monitoring."""
 

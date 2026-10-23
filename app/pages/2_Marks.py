@@ -54,7 +54,7 @@ if live_ids:
         st.rerun()
 else:
     st.info("No live contracts on this date. Book a trade or add contract months on the "
-            "Mark history page.")
+            "Charts page.")
 
 st.subheader("Proxy marks")
 st.write(
