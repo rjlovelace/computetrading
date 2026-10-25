@@ -26,6 +26,8 @@ rental blocks. The design is in [docs/design.md](docs/design.md).
   and $1,234.56 number formats on every screen and in the command line.
 - **v0.4**: a **Charts** page with term structures (and their day over day change), saved
   spreads with their daily change, and simple or exponential moving averages. See below.
+- **v0.5**: forward power for PJM, MISO and ERCOT (more ISOs by configuration), loaded from
+  CSV, charted and spread like compute, and the **energy cost** of each compute contract.
 
 ## Quick start
 
@@ -155,10 +157,68 @@ Run `ctrade eod` once a day after the indices publish (Ornn's daily print is sta
   `C:\path\to\computetrading\.venv\Scripts\ctrade.exe eod` with "Start in" set to the
   project folder.
 
+## Forward power
+
+Forward power curves sit alongside compute: each ISO's hubs and zones, on-peak, off-peak and
+around-the-clock (ATC), day-ahead or real-time, physical or financial. A power product is one
+of each, e.g. `PJM.WESTERNHUB.DA.F.ONPK`; its contract months are normal instruments, so
+marks, positions, P&L, charts and spreads all work the same way. Prices are $/MWh, quantities
+are MW, and a contract covers the month's hours in its time of use.
+
+There's no free public source for forward power curves (exchange settlements need a licence),
+so they load from CSV, on the **Power** page or with `ctrade power load`. Files dropped in
+`data/power/` are also loaded by `ctrade eod`. Columns (`ctrade power template` prints an
+example):
+
+| column | example | notes |
+|---|---|---|
+| trade_date | 2026-10-23 | the curve date |
+| iso | PJM | PJM, MISO, ERCOT, or any ISO in `config/isos.toml` |
+| contract_month | 2027-01 | or Jan27, Jan-27, 01/2027 |
+| settlement_point | Western Hub | hub, zone or node name |
+| point_type | hub | optional |
+| settlement | Day-Ahead | or Real-Time (DA, RT) |
+| delivery | Financial | or Physical |
+| time_of_use | onpeak | offpeak or ATC (5x16, 7x8, 7x24 also work) |
+| price | 78.50 | $/MWh |
+
+Every row is checked before anything loads, and a file with errors lists them all. Each price
+is stored as that contract's settlement for the date, so it becomes the mark (a mark entered
+by hand still wins) and the day's marks are rebuilt. Reloading a file changes nothing.
+
+Hours per contract come from `config/isos.toml`: PJM and MISO peak is HE8-HE23 and ERCOT
+HE7-HE22, Monday to Friday excluding NERC holidays. PJM and ERCOT follow daylight saving
+(March has one hour fewer, November one more); MISO runs on Eastern Standard Time all year.
+Add another ISO by adding a block to that file. Power contracts stop trading on the last
+business day before delivery, so a position closes at that day's mark.
+
+### Energy cost of compute
+
+    energy $/GPU-hour = power $/MWh x kW per GPU x PUE / 1,000
+
+The **Energy cost** tab on the Charts page compares a compute curve, such as CME.GPU1, with a
+power curve for the same months. It shows the energy cost, the margin (compute mark less
+energy) per GPU-hour, and both per contract (730 GPU-hours for CME). None of the compute
+contract specs publish an energy factor, so the defaults are NVIDIA DGX maximum system power
+per GPU (H100 and H200 1.275 kW, B200 1.8 kW, A100 0.8125 kW) with a PUE of 1.3. Change them
+on the Power page or with `ctrade energy set`.
+
+```bash
+ctrade power template curves.csv     # example file to fill in
+ctrade power load curves.csv
+ctrade power list
+ctrade power hours PJM 2027-03       # on-peak, off-peak and ATC hours
+ctrade curve PJM.WESTERNHUB.DA.F.ONPK
+ctrade spread add --leg "PJM.WESTERNHUB.DA.F.ONPK Jul27:1" --leg "PJM.WESTERNHUB.DA.F.OFFPK Jul27:-1"
+ctrade energy factors
+ctrade energy set H100 1.3 --pue 1.25
+ctrade energy cost CME.GPU1 PJM.WESTERNHUB.DA.F.ATC
+```
+
 ## Conventions
 
 - Quantities are contracts. Futures contracts cover the product's hours per month (CME: 730
-  fixed; ICE: the clock hours in the month). A spot contract is one GPU for every hour of its
+  fixed; ICE: the clock hours in the month). Power quantities are MW. A spot contract is one GPU for every hour of its
   delivery period.
 - Prices and marks are US dollars per GPU-hour, shown to four decimals ($2.5900). Money is
   shown to the cent ($1,234.56). Value = price x hours per contract x contracts.

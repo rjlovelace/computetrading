@@ -5,13 +5,15 @@ from __future__ import annotations
 import argparse
 import csv
 import getpass
+import os
 import sys
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import select
 
-from . import agents, analytics, marking, services
+from . import agents, analytics, energy, marking, power, services
 from .db import DatabaseUnavailable, Product, describe_url, init_db, session_scope
 from .formatting import adjustment, money, number, price
 
@@ -231,6 +233,10 @@ def cmd_mark_build(args) -> None:
 def cmd_eod(args) -> None:
     """Run the agents, build marks, then run the daily P&L."""
     with session_scope() as s:
+        files = sorted(POWER_DIR.glob("*.csv")) if POWER_DIR.exists() else []
+        if files:
+            print("== Power curves")
+            _load_power_files(s, files)
         print("== Agents")
         _print_load(marking.load_prices(s, _d(args.date), backfill_days=args.backfill))
     print("== P&L")
@@ -339,6 +345,81 @@ def _study(text: str) -> tuple[str, int]:
     if kind not in analytics.MA_KINDS or not window.isdigit():
         raise argparse.ArgumentTypeError("write e.g. 'SMA 20' or 'EMA 5'")
     return kind, int(window)
+
+
+POWER_DIR = Path(os.environ.get("CTRADE_POWER_DIR", "data/power"))
+
+
+def _load_power_files(session, paths) -> None:
+    for path in paths:
+        res = power.load_curves(session, Path(path).read_text(encoding="utf-8-sig"), str(path))
+        days = f"{res.dates[0]} to {res.dates[-1]}" if len(res.dates) > 1 else res.dates[0]
+        print(f"{path}: {res.rows} prices ({res.new_prices} new) for "
+              f"{len(res.products)} curves, {days}; marks rebuilt")
+
+
+def cmd_power_load(args) -> None:
+    with session_scope() as s:
+        _load_power_files(s, args.files)
+
+
+def cmd_power_template(args) -> None:
+    if args.file:
+        Path(args.file).write_text(power.TEMPLATE)
+        print(f"Wrote {args.file}")
+    else:
+        print(power.TEMPLATE, end="")
+
+
+def cmd_power_list(args) -> None:
+    with session_scope() as s:
+        for spec in power.specs(s):
+            print(f"{spec.product_code:32} {power.describe(spec)}")
+
+
+def cmd_power_hours(args) -> None:
+    year, month = map(int, args.month.split("-"))
+    print(f"{args.iso.upper()} {args.month}: " + ", ".join(
+        f"{power.TOU_NAMES[t]} {power.month_hours(args.iso, year, month, t)}"
+        for t in power.TOU_CODES) + " hours")
+
+
+def cmd_energy_factors(args) -> None:
+    with session_scope() as s:
+        for f in energy.factors(s):
+            print(f"{f.gpu_model:8} {number(f.kw_per_gpu)} kW/GPU x PUE {number(f.pue)} = "
+                  f"{number(f.mwh_per_gpu_hour)} MWh per GPU-hour  {f.comment}")
+
+
+def cmd_energy_set(args) -> None:
+    with session_scope() as s:
+        f = energy.set_factor(s, args.gpu.upper(), args.kw, args.pue, args.comment,
+                              getpass.getuser())
+    print(f"{f.gpu_model}: {number(f.mwh_per_gpu_hour)} MWh per GPU-hour")
+
+
+def cmd_energy_reset(args) -> None:
+    with session_scope() as s:
+        energy.reset_factor(s, args.gpu.upper())
+    print(f"{args.gpu.upper()} back to the default factor")
+
+
+def cmd_energy_cost(args) -> None:
+    with session_scope() as s:
+        dates = analytics.curve_dates(s, args.compute, _d(args.date))
+        if not dates:
+            raise SystemExit(f"No marks for {args.compute} on or before {args.date}")
+        df = energy.cost_curve(s, args.compute, args.power, dates[0])
+    if df.empty:
+        raise SystemExit(f"No {args.power} prices for the same months on {dates[0]}")
+    print(f"{args.compute} energy cost from {args.power} on {dates[0]} ($ per GPU-hour, "
+          "and $ per contract)")
+    print(f"{'contract':9}{'compute':>10}{'power/MWh':>11}{'energy':>10}{'margin':>10}"
+          f"{'energy/ctr':>13}{'margin/ctr':>13}")
+    for r in df.itertuples():
+        print(f"{r.contract:9}{price(r.compute):>10}{money(r.power):>11}{price(r.energy):>10}"
+              f"{price(r.margin):>10}{money(r.energy_per_contract):>13}"
+              f"{money(r.margin_per_contract):>13}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -458,6 +539,39 @@ def build_parser() -> argparse.ArgumentParser:
     srm = sprsub.add_parser("remove")
     srm.add_argument("spread", help="spread id or name")
     srm.set_defaults(fn=cmd_spread_remove)
+
+    pw = sub.add_parser("power", help="forward power curves")
+    pwsub = pw.add_subparsers(dest="action", required=True)
+    pwload = pwsub.add_parser("load", help="load forward power prices from CSV files")
+    pwload.add_argument("files", nargs="+")
+    pwload.set_defaults(fn=cmd_power_load)
+    pwtpl = pwsub.add_parser("template", help="print or write an example CSV")
+    pwtpl.add_argument("file", nargs="?")
+    pwtpl.set_defaults(fn=cmd_power_template)
+    pwsub.add_parser("list", help="power curves loaded").set_defaults(fn=cmd_power_list)
+    pwhours = pwsub.add_parser("hours", help="on-peak, off-peak and ATC hours in a month")
+    pwhours.add_argument("iso")
+    pwhours.add_argument("month", help="YYYY-MM")
+    pwhours.set_defaults(fn=cmd_power_hours)
+
+    en = sub.add_parser("energy", help="energy cost of compute contracts")
+    ensub = en.add_subparsers(dest="action", required=True)
+    ensub.add_parser("factors", help="kW per GPU and PUE by GPU type").set_defaults(
+        fn=cmd_energy_factors)
+    enset = ensub.add_parser("set", help="e.g. energy set H100 1.3 --pue 1.25")
+    enset.add_argument("gpu")
+    enset.add_argument("kw", help="server kW per GPU")
+    enset.add_argument("--pue", default=str(energy.DEFAULT_PUE))
+    enset.add_argument("--comment", default="")
+    enset.set_defaults(fn=cmd_energy_set)
+    enreset = ensub.add_parser("reset", help="go back to the default factor")
+    enreset.add_argument("gpu")
+    enreset.set_defaults(fn=cmd_energy_reset)
+    encost = ensub.add_parser("cost", help="e.g. energy cost CME.GPU1 PJM.WESTERNHUB.DA.F.ATC")
+    encost.add_argument("compute", help="compute product, e.g. CME.GPU1")
+    encost.add_argument("power", help="power product, e.g. PJM.WESTERNHUB.DA.F.ATC")
+    encost.add_argument("--date", default=date.today().isoformat())
+    encost.set_defaults(fn=cmd_energy_cost)
 
     eod = sub.add_parser("eod", help="agents, then marks, then daily P&L")
     eod.add_argument("--date", default=date.today().isoformat())

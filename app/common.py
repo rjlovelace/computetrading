@@ -12,7 +12,7 @@ from ctrade.db import DatabaseUnavailable, init_db, session_scope
 
 # Column formats: $ and thousands separators on every screen.
 MONEY_FMT = "dollar"  # $1,234.57, negatives as -$1,234.57
-PRICE_FMT = "$%,.4f"  # $ per GPU-hour
+PRICE_FMT = "$%,.4f"  # $ per GPU-hour or $/MWh
 QTY_FMT = "localized"  # 1,234.5
 
 

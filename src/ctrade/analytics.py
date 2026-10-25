@@ -56,6 +56,12 @@ def resolve_contract(session: Session, text: str) -> Instrument:
     raise ValueError(f"Unknown contract {text!r}: use e.g. CME.GPU1 Jan27 or CME.GPU1.2027-01")
 
 
+def unit(session: Session, product_code: str) -> str:
+    """Price unit: $/MWh for forward power, $/GPU-hour for compute."""
+    product = session.get(Product, product_code)
+    return "$/MWh" if product is not None and product.hours_rule == "power" else "$/GPU-hour"
+
+
 # --- term structure -----------------------------------------------------------------------
 
 

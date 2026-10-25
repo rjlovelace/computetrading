@@ -13,8 +13,8 @@ st.set_page_config(page_title="Marks", layout="wide")
 setup()
 st.title("Marks")
 st.write(
-    "End-of-day marks in $ per GPU-hour. Contracts are marked automatically when prices "
-    "load; a mark you enter here always wins over the automatic one."
+    "End-of-day marks in \\$ per GPU-hour (compute) or \\$/MWh (power). Contracts are marked "
+    "automatically when prices load; a mark you enter here always wins over the automatic one."
 )
 
 as_of = st.date_input("Mark date")
@@ -89,7 +89,7 @@ with st.form("add_proxy"):
     src_series = c2.selectbox("Series", series)
     src_inst = c2.text_input("Instrument id")
     mult = c3.text_input("Multiplier", value="1")
-    spread = c3.text_input("Spread ($ per GPU-hour, added)", value="0")
+    spread = c3.text_input("Spread ($ per unit, added)", value="0")
     priority = c3.number_input("Priority (lower is tried first)", min_value=1, value=1)
     comment = st.text_input("Comment")
     if st.form_submit_button("Add rule"):

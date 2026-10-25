@@ -196,6 +196,35 @@ class Spread(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PowerSpec(Base):
+    """What a forward power product is. One product per ISO, settlement point, settlement
+    market, delivery type and time of use, e.g. PJM Western Hub day-ahead financial on-peak.
+    Its contract months are ordinary instruments, priced in $/MWh for 1 MW."""
+
+    __tablename__ = "power_specs"
+
+    product_code: Mapped[str] = mapped_column(ForeignKey("products.code"), primary_key=True)
+    iso: Mapped[str] = mapped_column(String(20))
+    settlement_point: Mapped[str] = mapped_column(String(100))
+    point_type: Mapped[str] = mapped_column(String(20), default="")  # hub | zone | node
+    market: Mapped[str] = mapped_column(String(2))  # DA | RT
+    delivery: Mapped[str] = mapped_column(String(10))  # financial | physical
+    time_of_use: Mapped[str] = mapped_column(String(10))  # onpeak | offpeak | atc
+
+
+class EnergyFactor(Base):
+    """Power drawn per GPU, for turning a $/MWh power price into $/GPU-hour."""
+
+    __tablename__ = "energy_factors"
+
+    gpu_model: Mapped[str] = mapped_column(String(40), primary_key=True)
+    kw_per_gpu: Mapped[Decimal] = mapped_column(PRICE)  # server power per GPU, kW
+    pue: Mapped[Decimal] = mapped_column(PRICE, default=Decimal("1"))  # facility overhead
+    comment: Mapped[str] = mapped_column(Text, default="")
+    entered_by: Mapped[str] = mapped_column(String(60), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentRun(Base):
     """One run of one agent, for monitoring."""
 
