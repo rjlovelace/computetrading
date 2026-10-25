@@ -6,13 +6,15 @@ from charts import CHANGE_AXIS, curves, study_picker, time_series
 from common import flash, setup, table, user
 from sqlalchemy import select
 
-from ctrade import analytics, marking, services
+from ctrade import analytics, energy, marking, power, services
 from ctrade.db import Instrument, Product, session_scope
+from ctrade.formatting import number
 
 st.set_page_config(page_title="Charts", layout="wide")
 setup()
 st.title("Charts")
-st.write("Marks over time, term structures and spreads, in $ per GPU-hour.")
+st.write("Marks over time, term structures, spreads and the energy cost of compute. Compute "
+         "is priced in \\$ per GPU-hour and forward power in \\$/MWh.")
 
 with session_scope() as s:
     marked = services.marked_instruments(s)
@@ -22,7 +24,8 @@ with session_scope() as s:
         select(Instrument).where(Instrument.kind == "future")
         .order_by(Instrument.product_code, Instrument.delivery_start))}
 
-history_tab, curve_tab, spread_tab = st.tabs(["Mark history", "Term structure", "Spreads"])
+history_tab, curve_tab, spread_tab, energy_tab = st.tabs(
+    ["Mark history", "Term structure", "Spreads", "Energy cost"])
 
 # --- mark history -----------------------------------------------------------------------
 with history_tab:
@@ -44,8 +47,11 @@ with history_tab:
             if df.empty:
                 st.info("No marks for these contracts in this date range.")
             else:
-                st.altair_chart(time_series(df, "mark", "instrument", studies,
-                                            "Mark ($ per GPU-hour)", "Contract"),
+                with session_scope() as s:
+                    units = {analytics.unit(s, i.rsplit(".", 1)[0]) for i in picked}
+                label = f"Mark ({units.pop()})" if len(units) == 1 else "Mark ($)"
+                st.altair_chart(time_series(df, "mark", "instrument", studies, label,
+                                            "Contract"),
                                 width="stretch")
                 wide = df.pivot_table(index="date", columns="instrument", values="mark",
                                       aggfunc="last").sort_index(ascending=False).reset_index()
@@ -78,6 +84,7 @@ with curve_tab:
                            index=futures.index("CME.GPU1") if "CME.GPU1" in futures else 0)
     with session_scope() as s:
         dates = analytics.curve_dates(s, product)
+        unit = analytics.unit(s, product)
     if not dates:
         st.info(f"No marks for {product} yet. Add contract months on the Mark history tab.")
     else:
@@ -92,7 +99,7 @@ with curve_tab:
                 changes = analytics.curve_changes(s, product, picked_dates)
             curve["label"] = curve["date"].map(lambda d: d.strftime("%b %d"))
             st.subheader(f"{product} term structure")
-            st.altair_chart(curves(curve, "mark", "Mark ($ per GPU-hour)", "Curve date"),
+            st.altair_chart(curves(curve, "mark", f"Mark ({unit})", "Curve date"),
                             width="stretch")
             if changes.empty:
                 st.info("Day over day changes need a marked date before each curve date.")
@@ -101,7 +108,7 @@ with curve_tab:
                                     for d, p in zip(changes["date"], changes["prior"],
                                                     strict=True)]
                 st.subheader("Day over day change")
-                st.altair_chart(curves(changes, "change", "Change ($ per GPU-hour)", "Change"),
+                st.altair_chart(curves(changes, "change", f"Change ({unit})", "Change"),
                                 width="stretch")
             wide = curve.pivot_table(index=["month", "contract"], columns="label",
                                      values="mark", aggfunc="last")
@@ -161,14 +168,14 @@ with spread_tab:
         elif chosen:
             st.subheader("Spread")
             st.altair_chart(time_series(df, "value", "spread", studies,
-                                        "Spread ($ per GPU-hour)", "Spread"), width="stretch")
+                                        "Spread ($ per unit)", "Spread"), width="stretch")
             st.subheader("Daily change")
             chg = df.dropna(subset=["change"])
             if chg.empty:
                 st.info("Daily changes need at least two dates.")
             else:
                 st.altair_chart(time_series(chg, "change", "spread", studies,
-                                            "Daily change ($ per GPU-hour)", "Spread",
+                                            "Daily change ($ per unit)", "Spread",
                                             bars=len(chosen) == 1,
                                             axis_format=CHANGE_AXIS), width="stretch")
             table(df.sort_values(["date", "spread"], ascending=[False, True])
@@ -181,3 +188,60 @@ with spread_tab:
                     analytics.remove_spread(s, spreads[gone][0])
                 flash(f"Removed {gone}")
                 st.rerun()
+
+# --- energy cost --------------------------------------------------------------------------
+with energy_tab:
+    with session_scope() as s:
+        power_products = [sp.product_code for sp in power.specs(s)]
+        compute_products = [p for p in futures if p not in power_products]
+    if not power_products:
+        st.info("Load forward power curves on the Power page to see the energy cost of "
+                "compute.")
+    else:
+        st.write("What the electricity behind each GPU-hour costs at forward power prices: "
+                 "power $/MWh x kW per GPU x PUE / 1,000. A GPU runs around the clock, so "
+                 "an ATC curve is the usual choice. Set kW per GPU and PUE on the Power page.")
+        c1, c2, c3 = st.columns([1, 2, 1])
+        compute_product = c1.selectbox("Compute product", compute_products,
+                                       index=compute_products.index("CME.GPU1")
+                                       if "CME.GPU1" in compute_products else 0)
+        atc = [p for p in power_products if p.endswith(".ATC")]
+        power_product = c2.selectbox("Power curve", power_products,
+                                     index=power_products.index(atc[0]) if atc else 0)
+        with session_scope() as s:
+            dates = analytics.curve_dates(s, compute_product)
+        if not dates:
+            st.info(f"No marks for {compute_product} yet.")
+        else:
+            as_of = c3.selectbox("Date", dates, format_func=lambda d: d.strftime("%b %d, %Y"))
+            try:
+                with session_scope() as s:
+                    f = energy.factor(s, s.get(Product, compute_product).gpu_model)
+                    df = energy.cost_curve(s, compute_product, power_product, as_of)
+            except ValueError as e:
+                st.warning(str(e))
+                df = None
+            if df is not None:
+                st.caption(f"{f.gpu_model}: {number(f.kw_per_gpu)} kW per GPU x PUE "
+                           f"{number(f.pue)} = {number(f.mwh_per_gpu_hour * 1000)} kWh per "
+                           f"GPU-hour ({f.comment or 'set on the Power page'}).")
+                if df.empty:
+                    st.info(f"{power_product} has no prices for {compute_product}'s contract "
+                            f"months on {as_of}.")
+                else:
+                    long = df.melt(id_vars=["month", "contract"],
+                                   value_vars=["compute", "energy", "margin"],
+                                   var_name="label", value_name="price")
+                    long["label"] = long["label"].map({
+                        "compute": f"{compute_product} mark", "energy": "Energy cost",
+                        "margin": "Margin (mark - energy)"})
+                    st.altair_chart(curves(long, "price", "$ per GPU-hour", "Line"),
+                                    width="stretch")
+                    table(df.drop(columns="month").rename(columns={
+                        "compute": "compute mark", "power": "power $/MWh",
+                        "energy": "energy $/GPU-hr", "margin": "margin $/GPU-hr",
+                        "hours": "GPU-hours", "energy_per_contract": "energy $/contract",
+                        "margin_per_contract": "margin $/contract"}),
+                          price=["compute mark", "energy $/GPU-hr", "margin $/GPU-hr"],
+                          money=["power $/MWh", "energy $/contract", "margin $/contract"],
+                          qty=["GPU-hours"])

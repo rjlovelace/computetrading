@@ -1,7 +1,7 @@
 [project]
 name = "ctrade"
-version = "0.4.0"
-description = "Compute (GPU-hour) trading system: trades, positions, marks and daily P&L"
+version = "0.5.0"
+description = "Compute and forward power trading system: trades, positions, marks and daily P&L"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

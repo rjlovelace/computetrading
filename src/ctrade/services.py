@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from . import calendar as cal
-from . import engine, refdata
+from . import engine, power, refdata
 from .db import DailyPnL, Instrument, Mark, Product, Trade, utcnow
 
 # --- reference data -------------------------------------------------------------------
@@ -47,8 +47,12 @@ def _save_instrument(session: Session, spec: refdata.InstrumentSpec) -> Instrume
 
 
 def ensure_future(session: Session, product_code: str, month: str) -> Instrument:
-    if session.get(Product, product_code) is None:
-        raise ValueError(f"Unknown product {product_code}; run `ctrade seed` first")
+    """The monthly contract for a product (compute or forward power), created on first use."""
+    product = session.get(Product, product_code)
+    if product is None:
+        raise ValueError(f"Unknown product {product_code}; run `ctrade init` first")
+    if product.hours_rule == power.POWER:
+        return _save_instrument(session, power.instrument_spec(session, product_code, month))
     return _save_instrument(session, refdata.future_instrument(product_code, month))
 
 

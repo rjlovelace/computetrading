@@ -1,0 +1,71 @@
+# Power markets (ISOs/RTOs) whose forward curves can be loaded.
+#
+# Peak hours are hour-ending (HE) numbers in the ISO's market time: HE8-HE23 means the 16
+# hours from 07:00 to 23:00. Off-peak is every other hour of the month; around-the-clock
+# (ATC) is all of them.
+#
+#   peak_days  "weekdays" (5x16) or "mon-sat" (6x16, used in the West)
+#   holidays   "nerc": peak days exclude NERC holidays (New Year's Day, Memorial Day,
+#              Independence Day, Labor Day, Thanksgiving, Christmas; Sunday holidays move
+#              to Monday), or "none"
+#   dst        true if market time follows daylight saving, so March has one hour fewer
+#              and November one more
+#
+# To add an ISO, copy a block, change the name and settings, and load its CSV as usual.
+
+[iso.PJM]
+name = "PJM Interconnection"
+peak_days = "weekdays"
+peak_start = 8
+peak_end = 23
+holidays = "nerc"
+dst = true       # Eastern Prevailing Time
+
+[iso.MISO]
+name = "Midcontinent ISO"
+peak_days = "weekdays"
+peak_start = 8
+peak_end = 23
+holidays = "nerc"
+dst = false      # MISO runs on Eastern Standard Time all year
+
+[iso.ERCOT]
+name = "Electric Reliability Council of Texas"
+peak_days = "weekdays"
+peak_start = 7
+peak_end = 22
+holidays = "nerc"
+dst = true       # Central Prevailing Time
+
+# Examples for later; uncomment to use.
+# [iso.NYISO]
+# name = "New York ISO"
+# peak_days = "weekdays"
+# peak_start = 8
+# peak_end = 23
+# holidays = "nerc"
+# dst = true
+#
+# [iso.ISONE]
+# name = "ISO New England"
+# peak_days = "weekdays"
+# peak_start = 8
+# peak_end = 23
+# holidays = "nerc"
+# dst = true
+#
+# [iso.SPP]
+# name = "Southwest Power Pool"
+# peak_days = "weekdays"
+# peak_start = 7
+# peak_end = 22
+# holidays = "nerc"
+# dst = true
+#
+# [iso.CAISO]
+# name = "California ISO"
+# peak_days = "mon-sat"
+# peak_start = 7
+# peak_end = 22
+# holidays = "nerc"
+# dst = true

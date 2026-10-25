@@ -79,7 +79,7 @@ with session_scope() as s:
             st.altair_chart(
                 alt.Chart(hist).mark_line(point=True).encode(
                     x=alt.X("date:T", title=None),
-                    y=alt.Y("value:Q", title="$ per GPU-hour", axis=alt.Axis(format="$,.2f"),
+                    y=alt.Y("value:Q", title="Price ($)", axis=alt.Axis(format="$,.2f"),
                             scale=alt.Scale(zero=False)),
                     tooltip=[alt.Tooltip("date:T"), alt.Tooltip("value:Q", format="$,.4f")],
                 ),
