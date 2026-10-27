@@ -100,10 +100,12 @@ def test_energy_cost_per_compute_contract(url):
         (row,) = df.itertuples()
         assert row.contract == "Jan27"
         assert round(row.energy, 6) == round(69.80 * 1.0 * 1.25 / 1000, 6)  # $0.08725
-        assert round(row.margin, 5) == round(2.20 - 0.08725, 5)
+        assert round(row.total, 5) == round(2.20 + 0.08725, 5)
+        assert round(row.total_per_contract, 4) == round((2.20 + 0.08725) * 730, 4)
         assert row.hours == 730 and round(row.energy_per_contract, 4) == round(0.08725 * 730, 4)
         hist = energy.cost_history(s, gpu1, "PJM.WESTERNHUB.DA.F.ATC.2027-01")
         assert list(hist.date) == [date(2026, 10, 23)]
+        assert round(hist.total[0], 5) == round(2.20 + 0.08725, 5)
         with pytest.raises(ValueError):
             energy.factor(s, "MULTI")
         energy.reset_factor(s, "H100")

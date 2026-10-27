@@ -230,18 +230,18 @@ with energy_tab:
                             f"months on {as_of}.")
                 else:
                     long = df.melt(id_vars=["month", "contract"],
-                                   value_vars=["compute", "energy", "margin"],
+                                   value_vars=["compute", "energy", "total"],
                                    var_name="label", value_name="price")
                     long["label"] = long["label"].map({
                         "compute": f"{compute_product} mark", "energy": "Energy cost",
-                        "margin": "Margin (mark - energy)"})
+                        "total": "All-in cost (compute + energy)"})
                     st.altair_chart(curves(long, "price", "$ per GPU-hour", "Line"),
                                     width="stretch")
                     table(df.drop(columns="month").rename(columns={
                         "compute": "compute mark", "power": "power $/MWh",
-                        "energy": "energy $/GPU-hr", "margin": "margin $/GPU-hr",
+                        "energy": "energy $/GPU-hr", "total": "all-in $/GPU-hr",
                         "hours": "GPU-hours", "energy_per_contract": "energy $/contract",
-                        "margin_per_contract": "margin $/contract"}),
-                          price=["compute mark", "energy $/GPU-hr", "margin $/GPU-hr"],
-                          money=["power $/MWh", "energy $/contract", "margin $/contract"],
+                        "total_per_contract": "all-in $/contract"}),
+                          price=["compute mark", "energy $/GPU-hr", "all-in $/GPU-hr"],
+                          money=["power $/MWh", "energy $/contract", "all-in $/contract"],
                           qty=["GPU-hours"])
