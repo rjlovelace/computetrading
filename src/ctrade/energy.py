@@ -86,18 +86,18 @@ def _gpu_model(session: Session, compute_product: str) -> str:
     return product.gpu_model
 
 
-COLUMNS = ["month", "contract", "compute", "power", "energy", "margin", "hours",
-           "energy_per_contract", "margin_per_contract"]
+COLUMNS = ["month", "contract", "compute", "power", "energy", "total", "hours",
+           "energy_per_contract", "total_per_contract"]
 
 
 def cost_curve(session: Session, compute_product: str, power_product: str, as_of: date
                ) -> pd.DataFrame:
-    """Energy cost and margin for each compute contract month that has a power price for the
+    """Energy cost and all-in cost for each compute contract month that has a power price for the
     same delivery month on `as_of`.
 
     Columns: month, contract, compute ($/GPU-hr mark), power ($/MWh), energy ($/GPU-hr),
-    margin (compute - energy), hours (GPU-hours per contract), energy_per_contract and
-    margin_per_contract ($).
+    total (all-in cost: compute + energy), hours (GPU-hours per contract),
+    energy_per_contract and total_per_contract ($).
     """
     f = factor(session, _gpu_model(session, compute_product))
     compute = analytics.term_structure(session, compute_product, [as_of])
@@ -114,16 +114,17 @@ def cost_curve(session: Session, compute_product: str, power_product: str, as_of
         h = hours[r.instrument]
         rows.append({"month": r.month, "contract": r.contract, "compute": float(mark),
                      "power": power_by_month[r.month], "energy": float(energy),
-                     "margin": float(mark - energy), "hours": float(h),
+                     "total": float(mark + energy), "hours": float(h),
                      "energy_per_contract": float(energy * h),
-                     "margin_per_contract": float((mark - energy) * h)})
+                     "total_per_contract": float((mark + energy) * h)})
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
 def cost_history(session: Session, compute_instrument: str, power_instrument: str,
                  start: date | None = None, end: date | None = None) -> pd.DataFrame:
-    """Daily compute mark, energy cost ($/GPU-hr) and margin for one pair of contracts, on
-    dates where both have a mark. Columns: date, compute, energy, margin."""
+    """Daily compute mark, energy cost ($/GPU-hr) and all-in cost for one pair of contracts, on
+    dates where both have a mark. Columns: date, compute, energy, total
+    (compute + energy)."""
     inst = session.get(Instrument, compute_instrument)
     if inst is None:
         raise ValueError(f"Unknown instrument {compute_instrument}")
@@ -137,5 +138,5 @@ def cost_history(session: Session, compute_instrument: str, power_instrument: st
             energy = p[power_instrument] * f.mwh_per_gpu_hour
             rows.append({"date": d, "compute": float(p[compute_instrument]),
                          "energy": float(energy),
-                         "margin": float(p[compute_instrument] - energy)})
-    return pd.DataFrame(rows, columns=["date", "compute", "energy", "margin"])
+                         "total": float(p[compute_instrument] + energy)})
+    return pd.DataFrame(rows, columns=["date", "compute", "energy", "total"])

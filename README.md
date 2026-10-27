@@ -197,7 +197,7 @@ business day before delivery, so a position closes at that day's mark.
     energy $/GPU-hour = power $/MWh x kW per GPU x PUE / 1,000
 
 The **Energy cost** tab on the Charts page compares a compute curve, such as CME.GPU1, with a
-power curve for the same months. It shows the energy cost, the margin (compute mark less
+power curve for the same months. It shows the energy cost, the all-in cost (compute mark plus
 energy) per GPU-hour, and both per contract (730 GPU-hours for CME). None of the compute
 contract specs publish an energy factor, so the defaults are NVIDIA DGX maximum system power
 per GPU (H100 and H200 1.275 kW, B200 1.8 kW, A100 0.8125 kW) with a PUE of 1.3. Change them

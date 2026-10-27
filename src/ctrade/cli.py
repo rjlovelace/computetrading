@@ -414,12 +414,12 @@ def cmd_energy_cost(args) -> None:
         raise SystemExit(f"No {args.power} prices for the same months on {dates[0]}")
     print(f"{args.compute} energy cost from {args.power} on {dates[0]} ($ per GPU-hour, "
           "and $ per contract)")
-    print(f"{'contract':9}{'compute':>10}{'power/MWh':>11}{'energy':>10}{'margin':>10}"
-          f"{'energy/ctr':>13}{'margin/ctr':>13}")
+    print(f"{'contract':9}{'compute':>10}{'power/MWh':>11}{'energy':>10}{'all-in':>10}"
+          f"{'energy/ctr':>13}{'all-in/ctr':>13}")
     for r in df.itertuples():
         print(f"{r.contract:9}{price(r.compute):>10}{money(r.power):>11}{price(r.energy):>10}"
-              f"{price(r.margin):>10}{money(r.energy_per_contract):>13}"
-              f"{money(r.margin_per_contract):>13}")
+              f"{price(r.total):>10}{money(r.energy_per_contract):>13}"
+              f"{money(r.total_per_contract):>13}")
 
 
 def build_parser() -> argparse.ArgumentParser:
